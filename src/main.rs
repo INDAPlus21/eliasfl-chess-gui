@@ -1,6 +1,7 @@
 extern crate piston_window;
 
-use std::{collections::HashMap, path::PathBuf};
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 use piston_window::*;
 
@@ -18,6 +19,7 @@ enum Color {
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum Asset {
+    Empty,
     King(Color),
     Queen(Color),
     Rook(Color),
@@ -65,6 +67,7 @@ impl Asset {
             Bishop(Black) => assets.join("black_bishop.png"),
             Knight(Black) => assets.join("black_knight.png"),
             Pawn(Black) => assets.join("black_pawn.png"),
+            Empty => assets.join("not_found.png"),
         }
     }
     pub fn texture(&self, window: &mut PistonWindow) -> G2dTexture {
@@ -73,7 +76,7 @@ impl Asset {
             .filter(Filter::Nearest); // Aliasing filter
         Texture::from_path(
             &mut window.create_texture_context(),
-            &Asset::King(Color::White).location(),
+            self.location(),
             Flip::None,
             &texture_settings,
         )
@@ -82,6 +85,37 @@ impl Asset {
 }
 
 fn main() {
+    use Asset::*;
+    use Color::*;
+    let board = [
+        [
+            Rook(Black),
+            Knight(Black),
+            Bishop(Black),
+            Queen(Black),
+            King(Black),
+            Bishop(Black),
+            Knight(Black),
+            Rook(Black),
+        ],
+        [Pawn(Black); 8],
+        [Empty; 8],
+        [Empty; 8],
+        [Empty; 8],
+        [Empty; 8],
+        [Pawn(White); 8],
+        [
+            Rook(White),
+            Knight(White),
+            Bishop(White),
+            Queen(White),
+            King(White),
+            Bishop(White),
+            Knight(White),
+            Rook(White),
+        ],
+    ];
+
     let opengl = OpenGL::V3_2;
     // Default size: 640, 480
     let mut window: PistonWindow = WindowSettings::new("Hello Piston!", [480, 480])
@@ -92,6 +126,13 @@ fn main() {
     window.set_lazy(true);
 
     let mut _frame = 0_u64;
+    let mut mouse: Option<[f64; 2]> = None;
+    // let mut last_dragging = false;
+    // let mut dragging = false;
+
+    let mut pressed = false;
+    let mut picked_up: Option<[f64; 2]> = None;
+    let mut dropped: Option<[f64; 2]> = None;
 
     let mut textures = HashMap::new();
     for asset in Asset::all() {
@@ -105,6 +146,28 @@ fn main() {
         match event {
             Event::Loop(Loop::Render(_render_args)) => {
                 _frame += 1;
+
+                if let Some([x, y]) = mouse {
+                    if pressed {
+                        if let Some([_x, _y]) = picked_up {
+                            println!("Dropped piece at ({}, {})", x, y);
+                            dropped = Some([x, y]);
+                            picked_up = None;
+                        } else {
+                            println!("Picked up piece at ({}, {})", x, y);
+                            dropped = None;
+                            picked_up = Some([x, y]);
+                        }
+                    }
+                }
+
+                // if !last_dragging && dragging {
+                //     println!("Started dragging at ({}, {})", x, y);
+                // }
+                // if last_dragging && !dragging {
+                //     println!("Stopped dragging at ({}, {})", x, y);
+                // }
+
                 window.draw_2d(&event, |context, graphics, _device| {
                     clear([1.0; 4], graphics);
                     for row in 0..8 {
@@ -118,9 +181,36 @@ fn main() {
                                 graphics,
                             );
 
-                            // TODO: If piece here
-                            if row == 0 && col == 0 {
-                                let texture = textures.get(&Asset::King(Color::White)).unwrap();
+                            if let Some([_x, _y]) = picked_up {
+                                if _x >= x
+                                    && _x < x + square_size
+                                    && _y >= y
+                                    && _y < y + square_size
+                                {
+                                    rectangle(
+                                        [0.74, 0.23, 0.49, 0.6], // Red overlay
+                                        [x, y, square_size, square_size],
+                                        context.transform,
+                                        graphics,
+                                    );
+                                }
+                            }
+                            if let Some([_x, _y]) = dropped {
+                                if _x >= x
+                                    && _x < x + square_size
+                                    && _y >= y
+                                    && _y < y + square_size
+                                {
+                                    rectangle(
+                                        [0.23, 0.74, 0.49, 0.6], // Green overlay
+                                        [x, y, square_size, square_size],
+                                        context.transform,
+                                        graphics,
+                                    );
+                                }
+                            }
+
+                            if let Some(texture) = textures.get(&board[col][row]) {
                                 let (img_w, img_h) = texture.get_size();
                                 let scale = f64::min(
                                     square_size / img_w as f64,
@@ -135,6 +225,8 @@ fn main() {
                         }
                     }
                 });
+                // last_dragging = dragging;
+                pressed = false;
             }
             Event::Loop(Loop::Update(UpdateArgs { dt: _dt })) => {
                 // Update animation for rotating piece
@@ -146,24 +238,28 @@ fn main() {
                         println!("Key pressed: {:?}", _key)
                     }
                     (Button::Mouse(_button), ButtonState::Press) => {
-                        println!("Mouse pressed: {:?}", _button)
+                        // dragging = true;
+                        // println!("Mouse pressed: {:?}", _button);
+                        pressed = true;
                     }
                     (Button::Mouse(_button), ButtonState::Release) => {
-                        println!("Mouse released: {:?}", _button)
+                        // dragging = false;
+                        // println!("Mouse released: {:?}", _button);
                     }
                     _ => {}
                 }
             }
-            Event::Input(Input::Resize(res_args), ..) => {
-                let (x, y): (u32, u32) = (res_args.draw_size[0], res_args.draw_size[1]);
-                println!("New size: {}, {}", x, y);
-            }
-            Event::Input(Input::Move(Motion::MouseCursor([_x, _y])), ..) => {
-                //
+            Event::Input(Input::Move(Motion::MouseCursor(pos)), ..) => {
+                mouse = Some(pos);
             }
             Event::Input(Input::Cursor(false), ..) => {
                 // cursor left window, only triggered if a button is pressed.
-                println!("Mouse left screen");
+                // println!("Mouse left screen");
+                mouse = None;
+            }
+            Event::Input(Input::Resize(_res_args), ..) => {
+                // let (x, y): (u32, u32) = (_res_args.draw_size[0], _res_args.draw_size[1]);
+                // println!("New size: {}, {}", x, y);
             }
             _ => {}
         }
