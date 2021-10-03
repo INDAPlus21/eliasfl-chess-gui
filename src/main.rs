@@ -1,7 +1,6 @@
 extern crate piston_window;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
+use eliased_chess::{Color, Game, PieceType /* , GameState, Piece */};
 
 use piston_window::*;
 
@@ -11,114 +10,43 @@ use piston_window::*;
 const WHITE: [f32; 4] = [0.94, 0.93, 0.82, 1.0];
 const BLACK: [f32; 4] = [0.47, 0.59, 0.34, 1.0];
 
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-enum Color {
-    White,
-    Black,
-}
-
-#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-enum Asset {
-    Empty,
-    King(Color),
-    Queen(Color),
-    Rook(Color),
-    Bishop(Color),
-    Knight(Color),
-    Pawn(Color),
-}
-impl Asset {
-    pub fn all() -> [Asset; 12] {
-        use Asset::*;
-        use Color::*;
-        [
-            // White
-            King(White),
-            Queen(White),
-            Rook(White),
-            Bishop(White),
-            Knight(White),
-            Pawn(White),
-            // Black
-            King(Black),
-            Queen(Black),
-            Rook(Black),
-            Bishop(Black),
-            Knight(Black),
-            Pawn(Black),
-        ]
-    }
-    pub fn location(&self) -> PathBuf {
-        let assets = std::env::current_dir().unwrap().join("assets");
-        use Asset::*;
-        use Color::*;
-        match self {
-            // White
-            King(White) => assets.join("white_king.png"),
-            Queen(White) => assets.join("white_queen.png"),
-            Rook(White) => assets.join("white_rook.png"),
-            Bishop(White) => assets.join("white_bishop.png"),
-            Knight(White) => assets.join("white_knight.png"),
-            Pawn(White) => assets.join("white_pawn.png"),
-            // Black
-            King(Black) => assets.join("black_king.png"),
-            Queen(Black) => assets.join("black_queen.png"),
-            Rook(Black) => assets.join("black_rook.png"),
-            Bishop(Black) => assets.join("black_bishop.png"),
-            Knight(Black) => assets.join("black_knight.png"),
-            Pawn(Black) => assets.join("black_pawn.png"),
-            Empty => assets.join("not_found.png"),
-        }
-    }
-    pub fn texture(&self, window: &mut PistonWindow) -> G2dTexture {
-        let texture_settings = TextureSettings::new()
-            .mipmap(Filter::Nearest)
-            .filter(Filter::Nearest); // Aliasing filter
+fn init_textures(window: &mut PistonWindow) -> Vec<((PieceType, Color), G2dTexture)> {
+    use Color::*;
+    use PieceType::*;
+    let assets = std::env::current_dir().unwrap().join("assets");
+    let texture_settings = TextureSettings::new()
+        .mipmap(Filter::Nearest)
+        .filter(Filter::Nearest); // Aliasing filter
+    let mut asset = |path: &str| -> G2dTexture {
+        let asset_loc = assets.join(path);
         Texture::from_path(
             &mut window.create_texture_context(),
-            self.location(),
+            asset_loc,
             Flip::None,
             &texture_settings,
         )
         .unwrap()
-    }
+    };
+    vec![
+        ((King, White), asset("white_king.png")),
+        ((Queen, White), asset("white_queen.png")),
+        ((Rook, White), asset("white_rook.png")),
+        ((Bishop, White), asset("white_bishop.png")),
+        ((Knight, White), asset("white_knight.png")),
+        ((Pawn, White), asset("white_pawn.png")),
+        ((King, Black), asset("black_king.png")),
+        ((Queen, Black), asset("black_queen.png")),
+        ((Rook, Black), asset("black_rook.png")),
+        ((Bishop, Black), asset("black_bishop.png")),
+        ((Knight, Black), asset("black_knight.png")),
+        ((Pawn, Black), asset("black_pawn.png")),
+    ]
 }
 
 fn main() {
-    use Asset::*;
-    use Color::*;
-    let board = [
-        [
-            Rook(Black),
-            Knight(Black),
-            Bishop(Black),
-            Queen(Black),
-            King(Black),
-            Bishop(Black),
-            Knight(Black),
-            Rook(Black),
-        ],
-        [Pawn(Black); 8],
-        [Empty; 8],
-        [Empty; 8],
-        [Empty; 8],
-        [Empty; 8],
-        [Pawn(White); 8],
-        [
-            Rook(White),
-            Knight(White),
-            Bishop(White),
-            Queen(White),
-            King(White),
-            Bishop(White),
-            Knight(White),
-            Rook(White),
-        ],
-    ];
-
     let opengl = OpenGL::V3_2;
     // Default size: 640, 480
-    let mut window: PistonWindow = WindowSettings::new("Hello Piston!", [480, 480])
+    let mut window: PistonWindow = WindowSettings::new("Elias Chess Gui", [480, 480])
         .exit_on_esc(true)
         .graphics_api(opengl)
         .build()
@@ -134,10 +62,19 @@ fn main() {
     let mut picked_up: Option<[f64; 2]> = None;
     let mut dropped: Option<[f64; 2]> = None;
 
-    let mut textures = HashMap::new();
-    for asset in Asset::all() {
-        textures.insert(asset, asset.texture(&mut window));
-    }
+    let textures = init_textures(&mut window);
+    let find_texture = |_piecetype: PieceType, _color: Color| -> Option<G2dTexture> {
+        if let Some((_, tex)) = textures
+            .iter()
+            .find(|((_p, _c), _t)| _piecetype == *_p && _color == *_c)
+        {
+            Some(tex.clone())
+        } else {
+            None
+        }
+    };
+
+    let mut game = Game::new();
 
     while let Some(event) = window.next() {
         let Size { width, height } = window.size();
@@ -170,10 +107,10 @@ fn main() {
 
                 window.draw_2d(&event, |context, graphics, _device| {
                     clear([1.0; 4], graphics);
-                    for row in 0..8 {
-                        for col in 0..8 {
-                            let color = if (row + col) % 2 == 0 { WHITE } else { BLACK };
-                            let (x, y) = (square_size * row as f64, square_size * col as f64);
+                    for (r, row) in game.board.iter().enumerate() {
+                        for (c, piece) in row.iter().enumerate() {
+                            let color = if (r + c) % 2 == 0 { WHITE } else { BLACK }; // Even squares
+                            let (x, y) = (square_size * r as f64, square_size * c as f64);
                             rectangle(
                                 color,
                                 [x, y, square_size, square_size],
@@ -202,7 +139,7 @@ fn main() {
                                     && _y < y + square_size
                                 {
                                     rectangle(
-                                        [0.23, 0.74, 0.49, 0.6], // Green overlay
+                                        [0.0, 1.0, 0.0, 0.7], // Green overlay
                                         [x, y, square_size, square_size],
                                         context.transform,
                                         graphics,
@@ -210,17 +147,20 @@ fn main() {
                                 }
                             }
 
-                            if let Some(texture) = textures.get(&board[col][row]) {
-                                let (img_w, img_h) = texture.get_size();
-                                let scale = f64::min(
-                                    square_size / img_w as f64,
-                                    square_size / img_h as f64,
-                                );
-                                image(
-                                    texture,
-                                    context.trans(x, y).scale(scale, scale).transform,
-                                    graphics,
-                                );
+                            if let Some(_piece) = piece {
+                                if let Some(texture) = find_texture(_piece.piecetype, _piece.color)
+                                {
+                                    let (img_w, img_h) = texture.get_size();
+                                    let scale = f64::min(
+                                        square_size / img_w as f64,
+                                        square_size / img_h as f64,
+                                    );
+                                    image(
+                                        &texture,
+                                        context.trans(x, y).scale(scale, scale).transform,
+                                        graphics,
+                                    );
+                                }
                             }
                         }
                     }
