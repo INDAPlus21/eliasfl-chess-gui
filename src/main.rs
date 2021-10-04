@@ -1,7 +1,9 @@
 extern crate piston_window;
 
-use eliased_chess::{Color, Game, PieceType /* , GameState, Piece */};
+use std::path::PathBuf;
 
+use eliased_chess::{Color, Game, PieceType /* , GameState, Piece */};
+use glutin::{platform::windows::IconExtWindows, window::Icon};
 use piston_window::*;
 
 // Good inspiration for piston:
@@ -10,10 +12,12 @@ use piston_window::*;
 const WHITE: [f32; 4] = [0.94, 0.93, 0.82, 1.0];
 const BLACK: [f32; 4] = [0.47, 0.59, 0.34, 1.0];
 
-fn init_textures(window: &mut PistonWindow) -> Vec<((PieceType, Color), G2dTexture)> {
+fn init_textures(
+    window: &mut PistonWindow,
+    assets: PathBuf,
+) -> Vec<((PieceType, Color), G2dTexture)> {
     use Color::*;
     use PieceType::*;
-    let assets = std::env::current_dir().unwrap().join("assets");
     let texture_settings = TextureSettings::new()
         .mipmap(Filter::Nearest)
         .filter(Filter::Nearest); // Aliasing filter
@@ -43,6 +47,24 @@ fn init_textures(window: &mut PistonWindow) -> Vec<((PieceType, Color), G2dTextu
     ]
 }
 
+/// String notation "<file><rank>" from column and row
+fn pos_to_string(col: i8, row: i8) -> Option<String> {
+    let mut res = String::with_capacity(2);
+    res.push(match col {
+        0 => 'a',
+        1 => 'b',
+        2 => 'c',
+        3 => 'd',
+        4 => 'e',
+        5 => 'f',
+        6 => 'g',
+        7 => 'h',
+        _ => return None,
+    });
+    res.push(row.to_string().chars().last()?);
+    Some(res.to_uppercase())
+}
+
 fn main() {
     let opengl = OpenGL::V3_2;
     // Default size: 640, 480
@@ -52,6 +74,15 @@ fn main() {
         .build()
         .unwrap();
     window.set_lazy(true);
+    let assets = std::env::current_dir().unwrap().join("assets");
+    let mut glyphs = window
+        .load_font(assets.join("FiraSans-Regular.ttf"))
+        .unwrap();
+    window
+        .window
+        .ctx
+        .window()
+        .set_window_icon(Icon::from_path(assets.join("icon.ico"), None).ok());
 
     let mut _frame = 0_u64;
     let mut mouse: Option<[f64; 2]> = None;
@@ -61,8 +92,9 @@ fn main() {
     let mut pressed = false;
     let mut picked_up: Option<[f64; 2]> = None;
     let mut dropped: Option<[f64; 2]> = None;
+    let mut possible_moves: (Vec<String>, Vec<Vec<i8>>) = (vec!["".to_string()], vec![vec![]]);
 
-    let textures = init_textures(&mut window);
+    let textures = init_textures(&mut window, assets);
     let find_texture = |_piecetype: PieceType, _color: Color| -> Option<G2dTexture> {
         if let Some((_, tex)) = textures
             .iter()
@@ -85,15 +117,45 @@ fn main() {
                 _frame += 1;
 
                 if let Some([x, y]) = mouse {
+                    let (c, r) = (
+                        ((x / square_size) as i8).clamp(0, 7),
+                        ((y / square_size) as i8).clamp(0, 7),
+                    );
                     if pressed {
                         if let Some([_x, _y]) = picked_up {
-                            println!("Dropped piece at ({}, {})", x, y);
+                            println!("Dropped piece at ({}, {})", r, c);
+                            let (_c, _r) = (
+                                ((_x / square_size) as i8).clamp(0, 7),
+                                ((_y / square_size) as i8).clamp(0, 7),
+                            );
+                            eprintln!("Moving from ({}, {}) to ({}, {})", _r, _c, r, c);
+                            if let (Some(from), Some(to)) =
+                                (pos_to_string(_c, 8 - _r), pos_to_string(c, 8 - r))
+                            {
+                                // If `from` exists and is not equal to `to`
+                                if game
+                                    .board
+                                    .get(c as usize)
+                                    .unwrap_or(&[None; 8])
+                                    .get(r as usize)
+                                    .is_some()
+                                    && from != to
+                                {
+                                    eprintln!("Moving from {} to {}", from, to);
+                                    eprintln!(
+                                        "Gamestate after move: {:?}",
+                                        game.make_move(&from, to, true)
+                                    );
+                                }
+                            }
                             dropped = Some([x, y]);
                             picked_up = None;
+                            possible_moves = (vec!["".to_string()], vec![vec![]]);
                         } else {
-                            println!("Picked up piece at ({}, {})", x, y);
+                            println!("Picked up piece at ({}, {})", r, c);
                             dropped = None;
                             picked_up = Some([x, y]);
+                            possible_moves = game.get_possible_moves(&vec![c, r], true);
                         }
                     }
                 }
@@ -105,10 +167,10 @@ fn main() {
                 //     println!("Stopped dragging at ({}, {})", x, y);
                 // }
 
-                window.draw_2d(&event, |context, graphics, _device| {
+                window.draw_2d(&event, |context, graphics, device| {
                     clear([1.0; 4], graphics);
-                    for (r, row) in game.board.iter().enumerate() {
-                        for (c, piece) in row.iter().enumerate() {
+                    for (c, col) in game.board.iter().enumerate() {
+                        for (r, piece) in col.iter().enumerate() {
                             let color = if (r + c) % 2 == 0 { WHITE } else { BLACK }; // Even squares
                             let (x, y) = (square_size * r as f64, square_size * c as f64);
                             rectangle(
@@ -118,32 +180,42 @@ fn main() {
                                 graphics,
                             );
 
+                            // Messy if statement ⬇
+                            if let Some(_) = possible_moves.1.iter().find(|_p| {
+                                *_p.get(0).unwrap_or(&-1) == r as i8
+                                    && *_p.get(1).unwrap_or(&-1) == c as i8
+                            }) {
+                                rectangle(
+                                    [0.0, 1.0, 0.0, 0.7], // Green overlay
+                                    [x, y, square_size, square_size],
+                                    context.transform,
+                                    graphics,
+                                );
+                            }
+
                             if let Some([_x, _y]) = picked_up {
                                 if _x >= x
                                     && _x < x + square_size
                                     && _y >= y
                                     && _y < y + square_size
                                 {
-                                    rectangle(
-                                        [0.74, 0.23, 0.49, 0.6], // Red overlay
+                                    let radius = 2.0;
+                                    let rect = math::margin_rectangle(
                                         [x, y, square_size, square_size],
+                                        radius,
+                                    );
+                                    Rectangle::new_border([0.0, 0.0, 0.0, 1.0], radius).draw(
+                                        rect,
+                                        &context.draw_state,
                                         context.transform,
                                         graphics,
                                     );
-                                }
-                            }
-                            if let Some([_x, _y]) = dropped {
-                                if _x >= x
-                                    && _x < x + square_size
-                                    && _y >= y
-                                    && _y < y + square_size
-                                {
-                                    rectangle(
-                                        [0.0, 1.0, 0.0, 0.7], // Green overlay
-                                        [x, y, square_size, square_size],
-                                        context.transform,
-                                        graphics,
-                                    );
+                                    // rectangle(
+                                    //     [0.74, 0.23, 0.49, 0.6], // Red overlay
+                                    // [x, y, square_size, square_size],
+                                    // context.transform,
+                                    // graphics,
+                                    // );
                                 }
                             }
 
@@ -164,6 +236,18 @@ fn main() {
                             }
                         }
                     }
+
+                    text::Text::new_color([0.0, 1.0, 0.0, 1.0], 32)
+                        .draw(
+                            "Hello world!",
+                            &mut glyphs,
+                            &context.draw_state,
+                            context.trans(100.0, 100.0).transform,
+                            graphics,
+                        )
+                        .unwrap();
+                    // Update glyphs before rendering.
+                    glyphs.factory.encoder.flush(device);
                 });
                 // last_dragging = dragging;
                 pressed = false;
