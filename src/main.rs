@@ -2,7 +2,7 @@ extern crate piston_window;
 
 use std::path::PathBuf;
 
-use eliased_chess::{Color, Game, PieceType /* , GameState, Piece */};
+use eliased_chess::{Color, Game, Piece, PieceType};
 use glutin::{platform::windows::IconExtWindows, window::Icon};
 use piston_window::*;
 
@@ -68,12 +68,11 @@ fn pos_to_string(col: i8, row: i8) -> Option<String> {
 fn main() {
     let opengl = OpenGL::V3_2;
     // Default size: 640, 480
-    let mut window: PistonWindow = WindowSettings::new("Elias Chess Gui", [480, 480])
+    let mut window: PistonWindow = WindowSettings::new("Elias Chess Gui", [640, 640 + 80])
         .exit_on_esc(true)
         .graphics_api(opengl)
         .build()
         .unwrap();
-    window.set_lazy(true);
     let assets = std::env::current_dir().unwrap().join("assets");
     let mut glyphs = window
         .load_font(assets.join("FiraSans-Regular.ttf"))
@@ -84,15 +83,12 @@ fn main() {
         .window()
         .set_window_icon(Icon::from_path(assets.join("icon.ico"), None).ok());
 
-    let mut _frame = 0_u64;
     let mut mouse: Option<[f64; 2]> = None;
-    // let mut last_dragging = false;
-    // let mut dragging = false;
 
     let mut pressed = false;
     let mut picked_up: Option<[f64; 2]> = None;
-    let mut dropped: Option<[f64; 2]> = None;
     let mut possible_moves: (Vec<String>, Vec<Vec<i8>>) = (vec!["".to_string()], vec![vec![]]);
+    let mut piece_rotation: Option<f64> = None;
 
     let textures = init_textures(&mut window, assets);
     let find_texture = |_piecetype: PieceType, _color: Color| -> Option<G2dTexture> {
@@ -110,12 +106,10 @@ fn main() {
 
     while let Some(event) = window.next() {
         let Size { width, height } = window.size();
-        let square_size = f64::min(width, height) / 8.0;
+        let square_size = f64::min(width, height - 80.0) / 8.0;
 
         match event {
             Event::Loop(Loop::Render(_render_args)) => {
-                _frame += 1;
-
                 if let Some([x, y]) = mouse {
                     let (c, r) = (
                         ((x / square_size) as i8).clamp(0, 7),
@@ -133,39 +127,34 @@ fn main() {
                                 (pos_to_string(_c, 8 - _r), pos_to_string(c, 8 - r))
                             {
                                 // If `from` exists and is not equal to `to`
-                                if game
-                                    .board
-                                    .get(c as usize)
-                                    .unwrap_or(&[None; 8])
-                                    .get(r as usize)
-                                    .is_some()
-                                    && from != to
-                                {
+                                if from != to {
                                     eprintln!("Moving from {} to {}", from, to);
-                                    eprintln!(
-                                        "Gamestate after move: {:?}",
-                                        game.make_move(&from, to, true)
-                                    );
+                                    game.state = game.make_move(&from, to, true);
+                                    eprintln!("Gamestate after move: {:?}", game.state);
                                 }
                             }
-                            dropped = Some([x, y]);
+                            piece_rotation = None;
+                            // dropped = Some([x, y]);
                             picked_up = None;
                             possible_moves = (vec!["".to_string()], vec![vec![]]);
                         } else {
-                            println!("Picked up piece at ({}, {})", r, c);
-                            dropped = None;
-                            picked_up = Some([x, y]);
-                            possible_moves = game.get_possible_moves(&vec![c, r], true);
+                            if matches!(
+                                game.board
+                                    .get(r as usize)
+                                    .unwrap_or(&[None; 8])
+                                    .get(c as usize)
+                                    .unwrap(),
+                                Some(Piece {piecetype, ..}) if *piecetype != PieceType::Corpse
+                            ) {
+                                println!("Picked up piece at ({}, {})", r, c);
+                                piece_rotation = Some(0.0);
+                                // dropped = None;
+                                picked_up = Some([x, y]);
+                                possible_moves = game.get_possible_moves(&vec![c, r], true);
+                            }
                         }
                     }
                 }
-
-                // if !last_dragging && dragging {
-                //     println!("Started dragging at ({}, {})", x, y);
-                // }
-                // if last_dragging && !dragging {
-                //     println!("Stopped dragging at ({}, {})", x, y);
-                // }
 
                 window.draw_2d(&event, |context, graphics, device| {
                     clear([1.0; 4], graphics);
@@ -210,12 +199,6 @@ fn main() {
                                         context.transform,
                                         graphics,
                                     );
-                                    // rectangle(
-                                    //     [0.74, 0.23, 0.49, 0.6], // Red overlay
-                                    // [x, y, square_size, square_size],
-                                    // context.transform,
-                                    // graphics,
-                                    // );
                                 }
                             }
 
@@ -227,9 +210,25 @@ fn main() {
                                         square_size / img_w as f64,
                                         square_size / img_h as f64,
                                     );
+                                    let mut image_transform = context.trans(x, y);
+                                    image_transform =
+                                        image_transform.trans(square_size / 2.0, square_size / 2.0);
+                                    if let (Some(rot), Some([_x, _y])) = (piece_rotation, picked_up)
+                                    {
+                                        if _x >= x
+                                            && _x < x + square_size
+                                            && _y >= y
+                                            && _y < y + square_size
+                                        {
+                                            image_transform = image_transform.rot_rad(rot);
+                                        }
+                                    }
                                     image(
                                         &texture,
-                                        context.trans(x, y).scale(scale, scale).transform,
+                                        image_transform
+                                            .trans(-square_size / 2.0, -square_size / 2.0)
+                                            .zoom(scale)
+                                            .transform,
                                         graphics,
                                     );
                                 }
@@ -237,12 +236,26 @@ fn main() {
                         }
                     }
 
-                    text::Text::new_color([0.0, 1.0, 0.0, 1.0], 32)
+                    // Game state and color text
+                    text::Text::new_color([0.0, 0.0, 0.0, 1.0], 20)
                         .draw(
-                            "Hello world!",
+                            &format!(
+                                "Players turn: {:?}    Game state: {:?}",
+                                game.color, game.state
+                            )[..],
                             &mut glyphs,
                             &context.draw_state,
-                            context.trans(100.0, 100.0).transform,
+                            context.trans(10.0, height - 12.5 * 4.0).transform,
+                            graphics,
+                        )
+                        .unwrap();
+                    // Promotion piece instructions
+                    text::Text::new_color([0.0, 0.0, 0.0, 1.0], 20)
+                        .draw(
+                            "Press 'Q', 'R', 'B', 'N' to promote pawn to Queen, Rook, Bishop and Knight respectively",
+                            &mut glyphs,
+                            &context.draw_state,
+                            context.trans(10.0, height - 12.5).transform,
                             graphics,
                         )
                         .unwrap();
@@ -252,22 +265,28 @@ fn main() {
                 // last_dragging = dragging;
                 pressed = false;
             }
-            Event::Loop(Loop::Update(UpdateArgs { dt: _dt })) => {
+            Event::Loop(Loop::Update(UpdateArgs { dt })) => {
                 // Update animation for rotating piece
-                // game.update(dt);
+                if let Some(rot) = piece_rotation {
+                    piece_rotation = Some(rot + 2.0 * dt);
+                }
             }
             Event::Input(Input::Button(ButtonArgs { state, button, .. }), ..) => {
                 match (button, state) {
-                    (Button::Keyboard(_key), ButtonState::Press) => {
-                        println!("Key pressed: {:?}", _key)
+                    (Button::Keyboard(key), ButtonState::Press) => {
+                        game.set_promotion(match key {
+                            Key::N => PieceType::Knight,
+                            Key::R => PieceType::Rook,
+                            Key::B => PieceType::Bishop,
+                            _ => PieceType::Queen,
+                        });
+                        println!("Key pressed: {:?}", key)
                     }
                     (Button::Mouse(_button), ButtonState::Press) => {
-                        // dragging = true;
                         // println!("Mouse pressed: {:?}", _button);
                         pressed = true;
                     }
                     (Button::Mouse(_button), ButtonState::Release) => {
-                        // dragging = false;
                         // println!("Mouse released: {:?}", _button);
                     }
                     _ => {}
