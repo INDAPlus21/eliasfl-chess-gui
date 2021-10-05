@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 extern crate piston_window;
 
 use std::path::PathBuf;
