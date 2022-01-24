@@ -11,5 +11,5 @@ winres = "0.1"
 
 [dependencies]
 piston_window = "0.120.0"
-glutin = "*"
+glutin = "0.26.0"
 "eliased-chess" = { git = "https://github.com/INDAPlus21/eliased-chess" }

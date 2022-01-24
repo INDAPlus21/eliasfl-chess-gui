@@ -88,7 +88,7 @@ fn main() {
 
     let mut pressed = false;
     let mut picked_up: Option<[f64; 2]> = None;
-    let mut possible_moves: (Vec<String>, Vec<Vec<i8>>) = (vec!["".to_string()], vec![vec![]]);
+    let mut possible_moves: Option<Vec<Vec<i8>>> = None;
     let mut piece_rotation: Option<f64> = None;
 
     let textures = init_textures(&mut window, assets);
@@ -137,7 +137,7 @@ fn main() {
                             piece_rotation = None;
                             // dropped = Some([x, y]);
                             picked_up = None;
-                            possible_moves = (vec!["".to_string()], vec![vec![]]);
+                            possible_moves = None;
                         } else {
                             if matches!(
                                 game.board
@@ -151,7 +151,7 @@ fn main() {
                                 piece_rotation = Some(0.0);
                                 // dropped = None;
                                 picked_up = Some([x, y]);
-                                possible_moves = game.get_possible_moves(&vec![c, r], true);
+                                possible_moves = Some(game.get_possible_moves(&vec![c, r], true).1);
                             }
                         }
                     }
@@ -170,17 +170,19 @@ fn main() {
                                 graphics,
                             );
 
-                            // Messy if statement ⬇
-                            if let Some(_) = possible_moves.1.iter().find(|_p| {
-                                *_p.get(0).unwrap_or(&-1) == r as i8
+
+                            if let Some(ref moves) = possible_moves {
+                                if let Some(_) = moves.iter().find(|_p| {
+                                    *_p.get(0).unwrap_or(&-1) == r as i8
                                     && *_p.get(1).unwrap_or(&-1) == c as i8
-                            }) {
-                                rectangle(
-                                    [0.0, 1.0, 0.0, 0.7], // Green overlay
-                                    [x, y, square_size, square_size],
-                                    context.transform,
-                                    graphics,
-                                );
+                                }) {
+                                    rectangle(
+                                        [0.0, 1.0, 0.0, 0.7], // Green overlay
+                                        [x, y, square_size, square_size],
+                                        context.transform,
+                                        graphics,
+                                    );
+                                }
                             }
 
                             if let Some([_x, _y]) = picked_up {
